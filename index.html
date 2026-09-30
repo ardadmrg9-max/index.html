@@ -172,6 +172,8 @@
     </div>
   </div>
 
+  <div id="topBanner" class="hidden glass rounded-2xl px-4 py-3 mb-4 text-[12.5px] text-center leading-relaxed" style="border-color:rgba(224,16,31,.45); color:#ffb3b8;"></div>
+
   <div class="glass w-full rounded-2xl px-4 py-3.5 mb-6 flex items-center justify-center gap-2.5">
     <span class="serif font-semibold leading-none" style="font-size:30px; color:var(--accent-2);" id="streakNumber">—</span>
     <span class="text-[12px] text-[var(--text-dimmer)]" id="streakSuffix"></span>
@@ -522,6 +524,20 @@ function flashSync(){
   setTimeout(function(){ dot.style.opacity = '0'; }, 900);
 }
 
+function showBanner(msg){
+  var b=document.getElementById('topBanner');
+  b.textContent = msg;
+  b.classList.remove('hidden');
+}
+function hideBanner(){ document.getElementById('topBanner').classList.add('hidden'); }
+
+window.addEventListener('offline', function(){ showBanner('İnternet bağlantın yok. Değişiklikler bağlantı gelince senkronize olur.'); });
+window.addEventListener('online', function(){ hideBanner(); });
+
+setTimeout(function(){
+  if(!loaded) showBanner('Veriler yüklenmiyor. Firebase Rules "Publish" edildi mi ve internet açık mı kontrol et.');
+}, 7000);
+
 rootRef.on('value', function(snap){
   var v = snap.val() || {};
   cloud.plans = normalizeDayMap(v.plans);
@@ -536,14 +552,19 @@ rootRef.on('value', function(snap){
   if(!Array.isArray(pe)) pe = Object.keys(pe).map(function(k){ return pe[k]; });
   cloud.period = { entries: pe.filter(Boolean), cycleLen: per.cycleLen || 28, periodLen: per.periodLen || 5 };
   loaded = true;
+  hideBanner();
   flashSync();
   renderAll();
   if(adminOpen) renderAdmin();
+}, function(err){
+  showBanner('Sunucuya bağlanılamadı: ' + (err && err.message ? err.message : 'bilinmeyen hata') + '. Firebase Rules ayarlarını ve internet bağlantısını kontrol et.');
 });
 
 db.ref(DB_ROOT+'/done/'+todayKey()).on('value', function(snap){
   done = snap.val() || {};
   renderAll();
+}, function(err){
+  showBanner('Sunucuya bağlanılamadı: ' + (err && err.message ? err.message : 'bilinmeyen hata') + '.');
 });
 
 function saveCloud(patch){ rootRef.update(patch); }
@@ -693,17 +714,18 @@ function chipsHTML(sel, attr){
 function renderPlans(){
   document.getElementById('planChips').innerHTML = chipsHTML(localState.planDay,'data-planday');
   var arr=(cloud.plans[localState.planDay]||[]).slice().sort(bySort);
+  var isToday = localState.planDay === JS2TR[new Date().getDay()];
   document.getElementById('planList').innerHTML = arr.length
-    ? arr.map(function(t){ return rowHTML(Object.assign({},t,{kind:'plan'}),{editable:true,kind:'plan',day:localState.planDay}); }).join('')
-    : '<div class="glass rounded-2xl px-4 py-8 text-center"><p class="text-[13.5px] text-[var(--text-dimmer)]">'+localState.planDay+' için planın yok.</p></div>';
+    ? arr.map(function(t){ return rowHTML(Object.assign({},t,{kind:'plan'}),{editable:true,kind:'plan',day:localState.planDay,noCheck:!isToday}); }).join('')
+    : '<div class="glass rounded-2xl px-4 py-8 text-center"><p class="text-[13.5px] text-[var(--text-dimmer)]">'+(loaded ? localState.planDay+' için planın yok.' : 'Yükleniyor…')+'</p></div>';
 }
 
 function renderSchool(){
   document.getElementById('schoolChips').innerHTML = chipsHTML(localState.schoolDay,'data-schoolday');
   var arr=(cloud.school[localState.schoolDay]||[]).slice().sort(bySort);
   document.getElementById('schoolList').innerHTML = arr.length
-    ? arr.map(function(t){ return rowHTML(Object.assign({},t,{kind:'school'}),{noCheck:true}); }).join('')
-    : '<div class="glass rounded-2xl px-4 py-8 text-center"><p class="text-[13.5px] text-[var(--text-dimmer)]">'+localState.schoolDay+' için ders yok.</p></div>';
+    ? arr.map(function(t){ return rowHTML(Object.assign({},t,{kind:'school'}),{noCheck:true,editable:true,kind:'school',day:localState.schoolDay}); }).join('')
+    : '<div class="glass rounded-2xl px-4 py-8 text-center"><p class="text-[13.5px] text-[var(--text-dimmer)]">'+(loaded ? localState.schoolDay+' için ders yok.' : 'Yükleniyor…')+'</p></div>';
 }
 
 /* =================== REGL TAKVİMİ =================== */
@@ -786,7 +808,9 @@ function renderPeriod(){
 
   var e = sortedPeriodEntries();
   var sum = document.getElementById('pmSummary');
-  if(e.length){
+  if(!loaded){
+    sum.innerHTML = '<p class="text-[13.5px] text-[var(--text-dim)]">Yükleniyor…</p>';
+  } else if(e.length){
     var last = new Date(e[e.length-1]+'T00:00:00');
     var since = Math.floor((new Date(new Date().getFullYear(),new Date().getMonth(),new Date().getDate()) - last)/86400000);
     var pred = predictedNextPeriod();
@@ -857,7 +881,7 @@ document.body.addEventListener('click', function(e){
     return;
   }
   var pmd=e.target.closest('[data-pmdel]');
-  if(pmd){ removePeriodEntry(pmd.getAttribute('data-pmdel')); return; }
+  if(pmd){ if(confirm('Bu kayıt silinsin mi?')) removePeriodEntry(pmd.getAttribute('data-pmdel')); return; }
   if(e.target.closest('#pmPrev')){ periodView.m--; if(periodView.m<0){periodView.m=11; periodView.y--;} sTick(); renderPeriod(); return; }
   if(e.target.closest('#pmNext')){ periodView.m++; if(periodView.m>11){periodView.m=0; periodView.y++;} sTick(); renderPeriod(); return; }
   if(e.target.closest('#pmToday')){ addPeriodEntry(ymd(new Date())); renderPeriod(); return; }
@@ -1014,6 +1038,7 @@ document.getElementById('adminPanel').addEventListener('click', function(e){
   if(s){ adminSchoolDay=s.getAttribute('data-aschoolday'); sTick(); renderAdmin(); return; }
   var rd=e.target.closest('[data-recdel]');
   if(rd){
+    if(!confirm('Bu hatırlatma silinsin mi?')) return;
     var id=rd.getAttribute('data-recdel');
     cloud.recurring = cloud.recurring.filter(function(x){ return x.id!==id; });
     saveCloud({ recurring: cloud.recurring });
@@ -1047,6 +1072,13 @@ document.getElementById('recAddBtn').addEventListener('click', function(){
 });
 
 /* ---- toplu ekleme ---- */
+function normTr(s){
+  return s.toLowerCase()
+    .replace(/ı/g,'i').replace(/İ/g,'i').replace(/ş/g,'s').replace(/ç/g,'c')
+    .replace(/ğ/g,'g').replace(/ö/g,'o').replace(/ü/g,'u').trim();
+}
+var DAYS_NORM = DAYS.map(normTr);
+
 function parseBulk(text){
   var out=[];
   text.split('\n').forEach(function(line){
@@ -1056,8 +1088,10 @@ function parseBulk(text){
     var day=parts[0], time=parts[1], title=parts.slice(2).join(' | ');
     var m=time.match(/(\d{1,2})[:.](\d{2})\s*[-–—]\s*(\d{1,2})[:.](\d{2})/);
     if(!m) return;
-    var match=DAYS.find(function(d){ return d.toLowerCase().indexOf(day.toLowerCase().slice(0,4))===0; });
-    if(!match) return;
+    var dn=normTr(day);
+    var idx=DAYS_NORM.findIndex(function(d){ return d.indexOf(dn.slice(0,3))===0; });
+    if(idx===-1) return;
+    var match=DAYS[idx];
     out.push({ day:match, item:{
       id:uid(), title:title,
       start:String(m[1]).padStart(2,'0')+':'+m[2],
@@ -1176,6 +1210,7 @@ document.getElementById('editSave').addEventListener('click', function(){
 
 document.getElementById('editDelete').addEventListener('click', function(){
   if(!editCtx.id) return;
+  if(!confirm('Bu kayıt silinsin mi?')) return;
   var store = editCtx.kind==='plan' ? cloud.plans : cloud.school;
   store[editCtx.day] = (store[editCtx.day]||[]).filter(function(x){ return x.id!==editCtx.id; });
   var patch={}; patch[editCtx.kind==='plan'?'plans':'school']=store;
